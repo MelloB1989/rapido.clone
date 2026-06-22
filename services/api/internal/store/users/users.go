@@ -1,6 +1,9 @@
-package store
+package users
 
 import (
+	"apiservice/internal/config"
+	"apiservice/internal/errors"
+	"apiservice/internal/shared"
 	"context"
 	"fmt"
 	"time"
@@ -27,13 +30,13 @@ type User struct {
 //	PK = "USER#<sub>"   SK = "PROFILE"                  -> profile by subject
 //	GSI1PK = "PHONE#<phone>"  GSI1SK = "USER#<sub>"     -> lookup by phone (GSI1)
 type Users struct {
-	db    *dynamodb.Client
+	deps  *shared.Deps
 	table string
 }
 
 // NewUsers returns a Users repository bound to the given table.
-func NewUsers(db *dynamodb.Client, table string) *Users {
-	return &Users{db: db, table: table}
+func NewUsers(deps *shared.Deps) *Users {
+	return &Users{deps: deps, table: config.Load().UsersTableName}
 }
 
 // userItem is the on-the-wire DynamoDB representation including the table keys.
@@ -60,8 +63,11 @@ const (
 )
 
 // Get returns the profile for a Cognito subject, or ErrNotFound.
-func (r *Users) Get(ctx context.Context, sub string) (User, error) {
-	out, err := r.db.GetItem(ctx, &dynamodb.GetItemInput{
+func (r *Users) Get(ctx context.Context, sub string) (*User, errors.StoreError) {
+	if r.deps.Check() {
+		return nil, errors.ClientNotInitialized
+	}
+	out, err := r.deps.DDB.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(r.table),
 		Key: map[string]types.AttributeValue{
 			"PK": &types.AttributeValueMemberS{Value: userPK(sub)},
@@ -69,17 +75,17 @@ func (r *Users) Get(ctx context.Context, sub string) (User, error) {
 		},
 	})
 	if err != nil {
-		return User{}, fmt.Errorf("get user: %w", err)
+		return nil, fmt.Errorf("get user: %w", err)
 	}
 	if out.Item == nil {
-		return User{}, ErrNotFound
+		return nil, errors.ErrNotFound
 	}
 	return toUser(out.Item)
 }
 
 // Put upserts a user profile. CreatedAt is set on first write; UpdatedAt is
 // always refreshed. The returned User reflects the persisted timestamps.
-func (r *Users) Put(ctx context.Context, u User) (User, error) {
+func (r *Users) Put(ctx context.Context, u User) (*User, errors.StoreError) {
 	now := time.Now().UTC()
 	if u.CreatedAt.IsZero() {
 		u.CreatedAt = now
@@ -103,20 +109,20 @@ func (r *Users) Put(ctx context.Context, u User) (User, error) {
 
 	av, err := attributevalue.MarshalMap(item)
 	if err != nil {
-		return User{}, fmt.Errorf("marshal user: %w", err)
+		return nil, fmt.Errorf("marshal user: %w", err)
 	}
-	if _, err := r.db.PutItem(ctx, &dynamodb.PutItemInput{
+	if _, err := r.deps.DDB.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName: aws.String(r.table),
 		Item:      av,
 	}); err != nil {
-		return User{}, fmt.Errorf("put user: %w", err)
+		return nil, fmt.Errorf("put user: %w", err)
 	}
-	return u, nil
+	return &u, nil
 }
 
 // GetByPhone looks up a user via the GSI1 phone index, or ErrNotFound.
-func (r *Users) GetByPhone(ctx context.Context, phone string) (User, error) {
-	out, err := r.db.Query(ctx, &dynamodb.QueryInput{
+func (r *Users) GetByPhone(ctx context.Context, phone string) (*User, errors.StoreError) {
+	out, err := r.deps.DDB.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String(r.table),
 		IndexName:              aws.String(phoneIndex),
 		KeyConditionExpression: aws.String("GSI1PK = :pk"),
@@ -126,22 +132,22 @@ func (r *Users) GetByPhone(ctx context.Context, phone string) (User, error) {
 		Limit: aws.Int32(1),
 	})
 	if err != nil {
-		return User{}, fmt.Errorf("query user by phone: %w", err)
+		return nil, fmt.Errorf("query user by phone: %w", err)
 	}
 	if len(out.Items) == 0 {
-		return User{}, ErrNotFound
+		return nil, errors.ErrNotFound
 	}
 	return toUser(out.Items[0])
 }
 
-func toUser(item map[string]types.AttributeValue) (User, error) {
+func toUser(item map[string]types.AttributeValue) (*User, error) {
 	var it userItem
 	if err := attributevalue.UnmarshalMap(item, &it); err != nil {
-		return User{}, fmt.Errorf("unmarshal user: %w", err)
+		return nil, fmt.Errorf("unmarshal user: %w", err)
 	}
 	created, _ := time.Parse(time.RFC3339, it.CreatedAt)
 	updated, _ := time.Parse(time.RFC3339, it.UpdatedAt)
-	return User{
+	return &User{
 		Sub:       it.Sub,
 		Name:      it.Name,
 		Phone:     it.Phone,

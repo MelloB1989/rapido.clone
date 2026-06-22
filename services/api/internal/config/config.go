@@ -1,6 +1,8 @@
 package config
 
-import "os"
+import (
+	c "github.com/MelloB1989/karma/config"
+)
 
 // Config holds runtime configuration sourced from environment variables.
 // On Lambda these are injected by the CDK stack (and AWS_REGION by the runtime);
@@ -21,28 +23,21 @@ type Config struct {
 
 	// TableName is the DynamoDB single-table name. Injected by the CDK stack on
 	// Lambda; defaults to "raftaar" locally.
-	TableName string
+	UsersTableName string
 }
 
 // Load reads configuration from the environment.
 func Load() Config {
-	region := getenv("AWS_REGION", os.Getenv("COGNITO_REGION"))
+	region := c.GetEnvOrDefault("AWS_REGION", c.GetEnvRaw("COGNITO_REGION"))
 	if region == "" {
 		region = "ap-south-1"
 	}
 
 	return Config{
-		Port:              getenv("PORT", "8080"),
+		Port:              c.GetEnvOrDefault("PORT", "8080"),
 		Region:            region,
-		CognitoUserPoolID: os.Getenv("COGNITO_USER_POOL_ID"),
-		CognitoClientID:   os.Getenv("COGNITO_CLIENT_ID"),
-		TableName:         getenv("DYNAMODB_TABLE", "raftaar"),
+		CognitoUserPoolID: c.GetEnvRaw("COGNITO_USER_POOL_ID"),
+		CognitoClientID:   c.GetEnvRaw("COGNITO_CLIENT_ID"),
+		UsersTableName:    c.GetEnvOrDefault("DYNAMODB_TABLE", "raftaar-users"),
 	}
-}
-
-func getenv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

@@ -8,6 +8,7 @@ import (
 	"apiservice/internal/config"
 	"apiservice/internal/handlers"
 	"apiservice/internal/middleware"
+	"apiservice/internal/shared"
 	"apiservice/internal/store"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -49,7 +50,10 @@ func newApp(cfg config.Config) *fiber.App {
 	if err != nil {
 		log.Fatalf("failed to init dynamodb client: %v", err)
 	}
-	h := handlers.New(store.NewUsers(db, cfg.TableName))
+	deps := &shared.Deps{
+		DDB: db,
+	}
+	h := handlers.CreateRootHandler(deps)
 
 	protected := app.Group("/api", auth)
 	h.Register(app, protected)

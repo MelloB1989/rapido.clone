@@ -2,15 +2,11 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
-
-// ErrNotFound is returned when a requested item does not exist.
-var ErrNotFound = errors.New("not found")
 
 // NewClient builds a DynamoDB client using the default AWS credential chain
 // (the Lambda execution role in AWS, your aws-cli profile locally).

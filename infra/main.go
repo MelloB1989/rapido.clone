@@ -24,21 +24,27 @@ const (
 func newApiStack(scope constructs.Construct, id string, props *awscdk.StackProps) awscdk.Stack {
 	stack := awscdk.NewStack(scope, &id, props)
 
-	// Create an app client on the EXISTING user pool. Its ID is passed to the
-	// Lambda so the Fiber middleware can validate the token's client_id claim.
+	// App clients for the two native mobile apps, both on the EXISTING user pool.
+	// No secret (public native clients) and SRP-only auth, matching
+	// amazon-cognito-identity-js's authenticateUser flow. The API's Cognito
+	// middleware accepts any valid access token from this pool regardless of
+	// which client issued it (COGNITO_CLIENT_ID is intentionally left unset
+	// below), so adding more clients here never requires a backend change.
 	pool := awscognito.UserPool_FromUserPoolId(stack, jsii.String("UserPool"), jsii.String(cognitoUserPoolID))
-	client := pool.AddClient(jsii.String("ApiClient"), &awscognito.UserPoolClientOptions{
-		UserPoolClientName: jsii.String("raftaar-api"),
+	driverClient := pool.AddClient(jsii.String("DriverAppClient"), &awscognito.UserPoolClientOptions{
+		UserPoolClientName: jsii.String("raftaar-driver-app"),
 		GenerateSecret:     jsii.Bool(false),
-		AuthFlows: &awscognito.AuthFlow{
-			UserSrp:      jsii.Bool(true),
-			UserPassword: jsii.Bool(true),
-		},
+		AuthFlows:          &awscognito.AuthFlow{UserSrp: jsii.Bool(true)},
+	})
+	userClient := pool.AddClient(jsii.String("UserAppClient"), &awscognito.UserPoolClientOptions{
+		UserPoolClientName: jsii.String("raftaar-user-app"),
+		GenerateSecret:     jsii.Bool(false),
+		AuthFlows:          &awscognito.AuthFlow{UserSrp: jsii.Bool(true)},
 	})
 
 	// Single-table DynamoDB store (on-demand) with a GSI for secondary lookups.
 	table := awsdynamodb.NewTableV2(stack, jsii.String("Table"), &awsdynamodb.TablePropsV2{
-		TableName:    jsii.String("raftaar"),
+		TableName:    jsii.String("raftaar-users"),
 		PartitionKey: &awsdynamodb.Attribute{Name: jsii.String("PK"), Type: awsdynamodb.AttributeType_STRING},
 		SortKey:      &awsdynamodb.Attribute{Name: jsii.String("SK"), Type: awsdynamodb.AttributeType_STRING},
 		Billing:      awsdynamodb.Billing_OnDemand(nil),
@@ -70,7 +76,6 @@ func newApiStack(scope constructs.Construct, id string, props *awscdk.StackProps
 			// AWS_REGION is provided by the runtime; pass it explicitly for local parity.
 			"COGNITO_REGION":       jsii.String(region),
 			"COGNITO_USER_POOL_ID": jsii.String(cognitoUserPoolID),
-			"COGNITO_CLIENT_ID":    client.UserPoolClientId(),
 			"DYNAMODB_TABLE":       table.TableName(),
 		},
 	})
@@ -88,8 +93,11 @@ func newApiStack(scope constructs.Construct, id string, props *awscdk.StackProps
 	awscdk.NewCfnOutput(stack, jsii.String("ApiUrl"), &awscdk.CfnOutputProps{
 		Value: api.ApiEndpoint(),
 	})
-	awscdk.NewCfnOutput(stack, jsii.String("CognitoClientId"), &awscdk.CfnOutputProps{
-		Value: client.UserPoolClientId(),
+	awscdk.NewCfnOutput(stack, jsii.String("DriverAppClientId"), &awscdk.CfnOutputProps{
+		Value: driverClient.UserPoolClientId(),
+	})
+	awscdk.NewCfnOutput(stack, jsii.String("UserAppClientId"), &awscdk.CfnOutputProps{
+		Value: userClient.UserPoolClientId(),
 	})
 	awscdk.NewCfnOutput(stack, jsii.String("TableName"), &awscdk.CfnOutputProps{
 		Value: table.TableName(),
